@@ -1,5 +1,6 @@
 <script lang="ts">
     import {onMount} from 'svelte';
+    import Disco from '$lib/components/Disco.svelte';
 
     onMount(() => {
         const stored_data = localStorage.getItem('lista_discos');
@@ -21,7 +22,7 @@ type MusicBrainzData = {
     release_group_id: string | null,
 }
 
-type Disco = {
+type DiscoType = {
     id: number,
     artista: string,
     nombre: string,
@@ -36,7 +37,7 @@ type Disco = {
 const empty_musicbrainz: MusicBrainzData = {
     release_group_id: null,
 }
-const empty_disco: Disco = {
+const empty_disco: DiscoType = {
     id: -1,
     artista: '',
     nombre: '',
@@ -59,7 +60,7 @@ let nuevo_disco_parsed = $derived.by(() => {
     return snap;
 })
 
-let lista_discos: Disco[] = $state([
+let lista_discos: DiscoType[] = $state([
     {
         id: 0,
         artista: 'Artista',
@@ -70,6 +71,22 @@ let lista_discos: Disco[] = $state([
         }
     }
 ]);
+let lista_discos_sorted = $derived.by(() => {
+    const sorted_discos = lista_discos.toSorted(
+        (a,b) => {
+            let a_fecha = a.fecha_lanzamiento;
+            let b_fecha = b.fecha_lanzamiento;
+
+            if (a_fecha === null) {a_fecha = '9999'};
+            if (b_fecha === null) {b_fecha = '9999'};
+
+            
+            return a_fecha > b_fecha ? 1 : -1
+            
+        }
+    )
+    return sorted_discos
+})
 
 $effect(() => {
     if (loaded_data) {
@@ -120,16 +137,26 @@ function editar_disco(id: number) {
     nuevo_disco = $state.snapshot(lista_discos[id_to_index[id]])
 }
 
-function seleccionar_resultado(release_group) {
+function musicbrainz_to_disco(release_group) {
+    let disco = structuredClone(empty_disco)
+
     const rg_id = release_group.id;
     const fecha_lanzamiento = release_group['first-release-date'];
     const nombre = release_group.title;
     const artista = release_group['artist-credit'][0].name
 
-    nuevo_disco.musicbrainz.release_group_id = rg_id;
-    nuevo_disco.artista = artista;
-    nuevo_disco.nombre = nombre;
-    nuevo_disco.fecha_lanzamiento = fecha_lanzamiento;
+    disco.musicbrainz.release_group_id = rg_id;
+    disco.artista = artista;
+    disco.nombre = nombre;
+    disco.fecha_lanzamiento = fecha_lanzamiento;
+
+    return disco;
+}
+
+function seleccionar_resultado(release_group) {
+    const nuevo_disco_id = nuevo_disco.id;
+    nuevo_disco = musicbrainz_to_disco(release_group);
+    nuevo_disco.id = nuevo_disco_id
 
     submit_form();
 }
@@ -201,7 +228,7 @@ let last_submit = $state({});
         {:else}
         <div class='disco-img-size' style='background-color: lightgray;'></div>
         {/if}
-    <div>
+    <div class='disco-detalles'>
         <h3>{info_disco.artista} - {info_disco.nombre}</h3>
         {#if info_disco.fecha_lanzamiento}
             <p>{info_disco.fecha_lanzamiento}</p>
@@ -229,23 +256,48 @@ let last_submit = $state({});
     <button type="submit" onclick={handleOnSubmit}>Guardar</button>
 </form>
 
-<br/>
+<!-- <br/>
 {JSON.stringify(nuevo_disco)}
 <br/>
 Last submit: {JSON.stringify(last_submit)}
 Next id: {next_id}
 Id to index: {JSON.stringify(id_to_index)}
-<br/>
+<br/> -->
 <!-- CoverArt API Cache: {JSON.stringify(coverart_api_cache)} -->
 
-<h2>Discos</h2>
-{#each lista_discos as d}
-    <div class='disco-container' style='display: flex;'>
-        {@render disco(d)}
-        <div>
-            <button onclick={() => editar_disco(d.id)}>Editar</button>
-            <button onclick={() => borrar_disco(d.id)}>Borrar</button>
+{#if show_resultados}
+<h2>Resultados de busqueda</h2>
+{#if resultados_musicbrainz !== null}
+    {resultados_musicbrainz.count} resultado{#if resultados_musicbrainz.count !== 1}s{/if}
+    {#each resultados_musicbrainz['release-groups'] as rg}
+        <div class='disco-container'>
+
+            {#snippet acciones()}
+            <button onclick={() => seleccionar_resultado(rg)}>Seleccionar</button>  
+            {/snippet}
+            
+            <Disco info_disco={musicbrainz_to_disco(rg)} {acciones} {coverart_api_cache} />
         </div>
+    {/each}
+    
+{/if}
+
+<!-- <br/>
+{JSON.stringify(resultados_musicbrainz)} -->
+{/if}
+
+<h2>Discos</h2>
+{#each lista_discos_sorted as d (d.id)}
+    <div class='disco-container' style='display: flex;'>
+        {#snippet disco_acciones()}
+            
+                <button onclick={() => editar_disco(d.id)}>Editar</button>
+                <button onclick={() => borrar_disco(d.id)}>Borrar</button>
+            
+        {/snippet}
+        <!-- {@render disco(d)} -->
+        <Disco info_disco={d} {coverart_api_cache} acciones={disco_acciones} />
+        
     </div>
 {/each}
 
@@ -258,59 +310,13 @@ Id to index: {JSON.stringify(id_to_index)}
     </div>
 </div> -->
 
-{#if show_resultados}
-<h2>Resultados de busqueda</h2>
-{#if resultados_musicbrainz !== null}
-    {resultados_musicbrainz.count} resultado{#if resultados_musicbrainz.count !== 1}s{/if}
-    {#each resultados_musicbrainz['release-groups'] as rg}
-        <div class='disco'>
-            {#if rg.id in coverart_api_cache}
-            <img class='disco-img-size' alt={'album cover art'} src={coverart_api_cache[rg.id].images[0].thumbnails.small}/>
-            {:else}
-            <div class='disco-img-size' style='background-color: lightgray;'></div>
-            {/if}
-            <div>
-                <h3>{rg['artist-credit'][0].name} - {rg.title}</h3>
-                {#if rg['first-release-date']}
-                    <p>{rg['first-release-date']}</p>
-                {:else}
-                    <p>Fecha de lanzamiento desconocida</p>
-                {/if}
-            </div>
-            <div>
-                <button onclick={() => seleccionar_resultado(rg)}>Seleccionar</button>
-            </div>
-        </div>
-    {/each}
-    
-{/if}
-<div class='disco'>
-    <!-- <img src="http://coverartarchive.org/release-group/{rg.id}"/> -->
-    <div class='disco-img-size' style='background-color: lightgray;'></div>
-    <div>
-        <h3>Artista - Disco</h3>
-        
-        <p>2024-01-23</p>
-        
-    </div>
-</div>
-<br/>
-{JSON.stringify(resultados_musicbrainz)}
-{/if}
+
 
 <style>
-.disco {
-    display: flex;
-}
-.disco + .disco {
-    margin-top: 10px;
-}
 .disco-container + .disco-container {
     margin-top: 10px;
 }
-.disco:hover {
-    background-color: aliceblue;
-}
+
 .disco-img-size {
     width: 100px;
     height: 100px;
