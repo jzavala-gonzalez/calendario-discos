@@ -1,18 +1,56 @@
 <script lang="ts">
+    import {onMount} from 'svelte';
+
+    onMount(() => {
+        const stored_data = localStorage.getItem('lista_discos');
+        const stored_coverart_api_cache = localStorage.getItem('coverart_api_cache')
+        if (stored_data !== null) {
+            lista_discos = JSON.parse(stored_data)
+        }
+        if (stored_coverart_api_cache !== null) {
+            coverart_api_cache = JSON.parse(stored_coverart_api_cache)
+        }
+        loaded_data = true;
+    })
 
 // http://musicbrainz.org/ws/2/release-group/?fmt=json&query=releasegroup:Telos AND artist:Zedd
 // Remember to change los spaces for %20
 // Then, for cover art: http://coverartarchive.org/release-group/d7367f12-e0d9-4dfa-8daa-84483a7faac2
 
-const empty_disco = {
+type MusicBrainzData = {
+    release_group_id: string | null,
+}
+
+type Disco = {
+    id: number,
+    artista: string,
+    nombre: string,
+    fecha_lanzamiento: string,
+
+    musicbrainz: MusicBrainzData,
+
+    // CoverArt Archive
+    // TODO: Add
+}
+
+const empty_musicbrainz: MusicBrainzData = {
+    release_group_id: null,
+}
+const empty_disco: Disco = {
+    id: -1,
     artista: '',
     nombre: '',
-    fecha_lanzamiento: ''
+    fecha_lanzamiento: '',
+    musicbrainz: empty_musicbrainz,
 };
+
+let loaded_data = $state(false);
+
 let nuevo_disco = $state(empty_disco);
 let nuevo_disco_parsed = $derived.by(() => {
     let snap = $state.snapshot(nuevo_disco);
     for (const key in snap) {
+        if (typeof snap[key] !== 'string') continue;
         snap[key] = snap[key].trim();
         if (snap[key] === '') {
             snap[key] = null;
@@ -21,11 +59,80 @@ let nuevo_disco_parsed = $derived.by(() => {
     return snap;
 })
 
-let lista_discos = $state([]);
+let lista_discos: Disco[] = $state([
+    {
+        id: 0,
+        artista: 'Artista',
+        nombre: 'Disco',
+        fecha_lanzamiento: '',
+        musicbrainz: {
+            release_group_id: null,
+        }
+    }
+]);
 
-let resultados_musicbrainz = $state(null);
+$effect(() => {
+    if (loaded_data) {
+        localStorage.setItem('lista_discos', JSON.stringify(lista_discos))
+        localStorage.setItem('coverart_api_cache', JSON.stringify(coverart_api_cache))
+    }
+})
 
+let next_id = $derived.by(() => {
+    const num_discos = lista_discos.length;
+    if ((num_discos) === 0) return 0;
+    const used_ids = lista_discos.map(d => d.id);
+    return Math.max(...used_ids)+1
+})
 
+let id_to_index = $derived.by(() => {
+    const thedict = {}
+    lista_discos.forEach((d,i) => {
+        thedict[d.id] = i
+    })
+    return thedict
+})
+
+let show_resultados = $state(false);
+let resultados_musicbrainz: any = $state(null);
+
+let coverart_api_cache = $state({});
+$effect(() => {
+    if (resultados_musicbrainz === null) return;
+    const release_groups = resultados_musicbrainz['release-groups']
+    for (let rg of release_groups) {
+        const rg_id = rg.id;
+        if (rg_id in coverart_api_cache) continue;
+
+        fetch(`http://coverartarchive.org/release-group/${rg_id}`)
+        .then(response => response.json())
+        .then(data => {
+            coverart_api_cache[rg_id] = data;
+        });
+    }
+})
+
+function borrar_disco(id: number) {
+    lista_discos.splice(id_to_index[id],1)
+}
+
+function editar_disco(id: number) {
+    nuevo_disco = $state.snapshot(lista_discos[id_to_index[id]])
+}
+
+function seleccionar_resultado(release_group) {
+    const rg_id = release_group.id;
+    const fecha_lanzamiento = release_group['first-release-date'];
+    const nombre = release_group.title;
+    const artista = release_group['artist-credit'][0].name
+
+    nuevo_disco.musicbrainz.release_group_id = rg_id;
+    nuevo_disco.artista = artista;
+    nuevo_disco.nombre = nombre;
+    nuevo_disco.fecha_lanzamiento = fecha_lanzamiento;
+
+    submit_form();
+}
 
 function validate_form(submitted_disco) {
     let ok = true;
@@ -39,17 +146,28 @@ function validate_form(submitted_disco) {
     return ok;
 }
 
-function handleOnSubmit(event) {
-    event.preventDefault();
-    const form = event.target;
-
+function submit_form() {
     let submitted_disco = $state.snapshot(nuevo_disco_parsed);
-    validate_form(submitted_disco);
-    
-    lista_discos.push(submitted_disco);
+    let ok = validate_form(submitted_disco);
+    if (!ok) return;
+
+    if (submitted_disco.id in id_to_index) {
+        lista_discos[id_to_index[submitted_disco.id]] = submitted_disco
+    } else {
+        submitted_disco.id = next_id
+        lista_discos.push(submitted_disco);
+    }
+
     // reset form
     nuevo_disco = empty_disco;
     last_submit = submitted_disco;
+
+    show_resultados = false;
+}
+
+function handleOnSubmit(event) {
+    event.preventDefault();
+    submit_form();
 }
 
 function handleBuscar(event) {
@@ -66,6 +184,7 @@ function handleBuscar(event) {
         .then(response => response.json())
         .then(data => {
             resultados_musicbrainz = data;
+            show_resultados = true;
         });
 
 }
@@ -77,7 +196,11 @@ let last_submit = $state({});
 
 {#snippet disco(info_disco)}
     <div class='disco'>
-    <img />
+        {#if info_disco.musicbrainz.release_group_id in coverart_api_cache}
+        <img class='disco-img-size' alt={'album cover art'} src={coverart_api_cache[info_disco.musicbrainz.release_group_id].images[0].thumbnails.small}/>
+        {:else}
+        <div class='disco-img-size' style='background-color: lightgray;'></div>
+        {/if}
     <div>
         <h3>{info_disco.artista} - {info_disco.nombre}</h3>
         {#if info_disco.fecha_lanzamiento}
@@ -110,27 +233,42 @@ let last_submit = $state({});
 {JSON.stringify(nuevo_disco)}
 <br/>
 Last submit: {JSON.stringify(last_submit)}
+Next id: {next_id}
+Id to index: {JSON.stringify(id_to_index)}
+<br/>
+<!-- CoverArt API Cache: {JSON.stringify(coverart_api_cache)} -->
 
 <h2>Discos</h2>
 {#each lista_discos as d}
-    {@render disco(d)}
+    <div class='disco-container' style='display: flex;'>
+        {@render disco(d)}
+        <div>
+            <button onclick={() => editar_disco(d.id)}>Editar</button>
+            <button onclick={() => borrar_disco(d.id)}>Borrar</button>
+        </div>
+    </div>
 {/each}
 
-<div class='disco'>
+<!-- <div class='disco'>
+    <div class='disco-img-size' style='background-color: lightgray;'></div>
     <img class='disco-img-size' src="https://ia902203.us.archive.org/7/items/mbid-fc863ed0-e7f4-4689-9f9d-fd18ebfed033/mbid-fc863ed0-e7f4-4689-9f9d-fd18ebfed033-39142166955_thumb250.jpg"/>
     <div>
         <h3>Zedd - Telos</h3>
         <p>2024-08-30</p>
     </div>
-</div>
+</div> -->
 
+{#if show_resultados}
 <h2>Resultados de busqueda</h2>
 {#if resultados_musicbrainz !== null}
     {resultados_musicbrainz.count} resultado{#if resultados_musicbrainz.count !== 1}s{/if}
     {#each resultados_musicbrainz['release-groups'] as rg}
         <div class='disco'>
-            <!-- <img src="http://coverartarchive.org/release-group/{rg.id}"/> -->
-            <div class='disco-img-size'></div>
+            {#if rg.id in coverart_api_cache}
+            <img class='disco-img-size' alt={'album cover art'} src={coverart_api_cache[rg.id].images[0].thumbnails.small}/>
+            {:else}
+            <div class='disco-img-size' style='background-color: lightgray;'></div>
+            {/if}
             <div>
                 <h3>{rg['artist-credit'][0].name} - {rg.title}</h3>
                 {#if rg['first-release-date']}
@@ -139,13 +277,16 @@ Last submit: {JSON.stringify(last_submit)}
                     <p>Fecha de lanzamiento desconocida</p>
                 {/if}
             </div>
+            <div>
+                <button onclick={() => seleccionar_resultado(rg)}>Seleccionar</button>
+            </div>
         </div>
     {/each}
     
 {/if}
 <div class='disco'>
     <!-- <img src="http://coverartarchive.org/release-group/{rg.id}"/> -->
-    <div class='disco-img-size' style='background-color: lightgray;'/>
+    <div class='disco-img-size' style='background-color: lightgray;'></div>
     <div>
         <h3>Artista - Disco</h3>
         
@@ -155,10 +296,20 @@ Last submit: {JSON.stringify(last_submit)}
 </div>
 <br/>
 {JSON.stringify(resultados_musicbrainz)}
+{/if}
 
 <style>
 .disco {
     display: flex;
+}
+.disco + .disco {
+    margin-top: 10px;
+}
+.disco-container + .disco-container {
+    margin-top: 10px;
+}
+.disco:hover {
+    background-color: aliceblue;
 }
 .disco-img-size {
     width: 100px;
