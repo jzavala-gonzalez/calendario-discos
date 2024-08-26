@@ -1,4 +1,6 @@
 <script lang="ts">
+    import '@fontsource/inter';
+
     import {onMount} from 'svelte';
     import Disco from '$lib/components/Disco.svelte';
 
@@ -313,6 +315,10 @@ Id to index: {JSON.stringify(id_to_index)}
 
 
 <style>
+* {
+    font-family: 'Inter';
+}
+
 .disco-container + .disco-container {
     margin-top: 10px;
 }
