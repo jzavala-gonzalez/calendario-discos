@@ -1,0 +1,9 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "calendario-discos-worker"
+main = "src/index.js"
+compatibility_date = "2024-08-21"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding = "calendario_discos"
+id = "1a59cc5048564b0e966c8fb4a6e300dd"
